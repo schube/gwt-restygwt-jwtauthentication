@@ -1,0 +1,62 @@
+object Client Server
+Client->Server: Send request with access token AT1
+note left of Server: Access token is still valid
+Server->Client: Send response with payload
+
+
+object Client Server
+Client->Server: Send request with access token
+note left of Server: Access token not valid
+Server->Client: Send response "401 Unauthorized"
+Client->Server: Send request to get new access token
+Server->Client: Send response with new access token, invalidating old refresh token
+note right of Client: The initial request is prepared for sending again
+Client->Server: Send request with new access token
+Server->Client: Send response with payload
+
+
+
+object Request1 Request2 Server
+Request1->Server: Send request 1 with access token "AT1"
+Request2->Server: Send request 2 with access token "AT1"
+note left of Server: Access token  "AT1" not valid
+Server->Request1: Send response 1 "401 Unauthorized"
+Server->Request2: Send response 2 "401 Unauthorized"
+Request1->Server: Send request to get new access token by using refresh token "RT1"
+Server->Server: Creates new access token "AT2" and refresh token "RT2", invalidates old token "RT1"
+Server->Request1: Send access token "AT2" and refresh token "RT2" to client
+Request2->Server: Send request to get new access token by using refresh token "RT1"
+Server->Request2: Sends error, since refresh token "RT1" is not valid any more.
+note right of Request2: @@@@ Application displays error message to user !!!!
+Server->Request1: Send response with new access token "AT2" and new refresh token "RT2"
+note right of Request1: The initial request is prepared for sending again
+Request1->Server: Send request with new access token "AT2"
+Server->Request1: Send response with payload
+
+object Request1 Request2 Server
+Request1->Server: Step 1:  Send request 1 with access token "AT1"
+Request2->Server: Step 2: Send request 2 with access token "AT1"
+note left of Server: Access token  "AT1" not valid
+Server->Request1: Step 3: Send response 1 "401 Unauthorized"
+Server->Request2: Step 4: Send response 2 "401 Unauthorized"
+Request1->Server: Step 5: Send request to get new access token by using refresh token "RT1"
+Server->Server: Step 6: Creates new access token "AT2" and refresh token "RT2", invalidates old token "RT1"
+Request2->Server: Step 7: Send request to get new access token by using refresh token "RT1"
+Server->Request2: Step 8: Sends error, since refresh token "RT1" is not valid any more.
+note right of Request2: @@@@ Application displays error message to user !!!!
+Server->Request1: Step 9: Send response with new access token "AT2" and new refresh token "RT2"
+note right of Request1: The initial request is prepared for sending again
+Request1->Server: Step 10: Send request with new access token "AT2"
+Server->Request1: Step 11: Send response with payload
+
+object Request1 Request2 Request3 Request4 Server
+note left of Server: Request/Response in "correct" order
+Request1->Server: Send request 1
+Request2->Server: Send request 2
+Server->Request1: Send response 1
+Server->Request2: Send response 2
+note left of Server: Request/Response in "incorrect" order
+Request3->Server: Send request 3
+Request4->Server: Send request 4
+Server->Request4: Send response 4
+Server->Request3: Send response 3
