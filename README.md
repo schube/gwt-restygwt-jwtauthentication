@@ -71,7 +71,7 @@ This is the sequence:
      |                                               Send response with payload |
      |<-------------------------------------------------------------------------|
      |                                                                          |
-~~
+~~~
 
 # Problem
 
