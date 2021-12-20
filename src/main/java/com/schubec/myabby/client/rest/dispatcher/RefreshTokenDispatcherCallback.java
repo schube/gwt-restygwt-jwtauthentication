@@ -12,12 +12,14 @@ import com.google.gwt.http.client.Response;
 import com.google.gwt.logging.client.LogConfiguration;
 import com.google.gwt.user.client.Cookies;
 import com.google.gwt.user.client.Timer;
-import com.schubec.myabby.client.CookieKeys;
-import com.schubec.myabby.client.event.RuntimeErrorEvent;
-import com.schubec.myabby.client.rest.LoginService;
-import com.schubec.myabby.client.rest.ServiceFactory;
-import com.schubec.myabby.client.rest.models.JWTToken;
-import com.schubec.myabby.client.rest.models.UserCredentials;
+import com.schubec.spass.client.CookieKeys;
+import com.schubec.spass.client.event.RuntimeErrorEvent;
+import com.schubec.spass.client.rest.LoginService;
+import com.schubec.spass.client.rest.ServiceFactory;
+import com.schubec.spass.client.rest.models.JWTToken;
+import com.schubec.spass.client.rest.models.UserCredentials;
+
+import elemental2.promise.Promise;
 
 /**
  * Based on
@@ -29,10 +31,8 @@ public class RefreshTokenDispatcherCallback implements RequestCallback {
 	protected RequestCallback requestCallback;
 	private Method mainmethod;
 	private SimpleEventBus eventBus;
+	private static Promise<String> accessTokenPromise;
 	private static boolean accesstokenIsBeiingRefreshed = false;
-	protected int gracePeriod = 100;
-	protected int numberOfRetries = 10;
-	protected int currentRetryCounter = 0;
 
 	public RefreshTokenDispatcherCallback(Method method, SimpleEventBus eventBus) {
 		// GWT.log("_________> ForbiddenDispatcherCallback " + method.toString());
@@ -43,84 +43,69 @@ public class RefreshTokenDispatcherCallback implements RequestCallback {
 
 	@Override
 	public void onResponseReceived(Request request, Response response) {
-		// GWT.log("_________> ForbiddenDispatcherCallback -> onResponseReceived");
-
-		// GWT.log(response.getStatusText() + "/"+ response.getStatusCode() + ". Request
-		// was " + request.toString());
 		if (response.getStatusCode() == Response.SC_OK) {
-			// GWT.log("onResponseReceived with Statuscode 200/OK");
 			requestCallback.onResponseReceived(request, response);
 		} else if (response.getStatusCode() == Response.SC_UNAUTHORIZED && accesstokenIsBeiingRefreshed == true) {
-			GWT.log("Another request is getting a new AccessToken. Delaying request [" + mainmethod.builder.getHTTPMethod() + "/" + mainmethod.builder.getUrl() + "] for [" + gracePeriod + "]ms.");
+			GWT.log("Another request is getting a new AccessToken. Delaying request [" + mainmethod.builder.getHTTPMethod() + "/" + mainmethod.builder.getUrl() + "] until promise is resolved.");
 
-			// We will delay our request for and hope, the other request fetched the token
-			// already.
-			Timer t = new Timer() {
-				@Override
-				public void run() {
-					if (currentRetryCounter < numberOfRetries) {
-						currentRetryCounter++;
-						if (accesstokenIsBeiingRefreshed == false) {
-							GWT.log("Executing delayed request [" + mainmethod.builder.getHTTPMethod() + "/" + mainmethod.builder.getUrl() + "] now.");
-							try {
-								// Rewrite the Authorization Header...
-								mainmethod.header("Authorization", "Bearer " + UserCredentials.INSTANCE.getAccessToken());
-								// ...and send it again!
-								mainmethod.builder.send();
-							} catch (RequestException ex) {
-								if (GWT.isClient() && LogConfiguration.loggingIsEnabled()) {
-									GWT.log("Error sending delayed request", ex);
-								}
-							}
-						} else {
-							GWT.log("XXXX SCHEDULE 2");
-							this.schedule(gracePeriod);
-							gracePeriod = gracePeriod * 2;
-						}
-					} else {
-						eventBus.fireEvent(new RuntimeErrorEvent("Authentifizierungsfehler", "Request konnte nicht zum Server gesendet werden, da kein AccessToken zur Verfügung stand.", true));
-						Cookies.removeCookie(CookieKeys.JWT_REFRESH_TOKEN);
+			accessTokenPromise.then(newlyRefreshedAccessToken -> {
+				GWT.log("Executing delayed request [" + mainmethod.builder.getHTTPMethod() + "/" + mainmethod.builder.getUrl() + "] now.");
+				try {
+					// Rewrite the Authorization Header...
+					mainmethod.header("Authorization", "Bearer " + newlyRefreshedAccessToken);
+					// ...and send it again!
+					mainmethod.builder.send();
+				} catch (RequestException ex) {
+					if (GWT.isClient() && LogConfiguration.loggingIsEnabled()) {
+						GWT.log("Error sending delayed request", ex);
 					}
 				}
-			};
-			GWT.log("XXXX SCHEDULE 1");
-			t.schedule(gracePeriod);
-			gracePeriod = gracePeriod * 2;
+				return null;
+			}, (error) -> {
+				GWT.log("waiting for new accessTokenPromise rejected");
+				// We don't have to do much here, since we already fired a RuntimeErrorEvent
+				// when fetching a new access token failed.
+				return null;
+			});
 
 		} else if (response.getStatusCode() == Response.SC_UNAUTHORIZED && accesstokenIsBeiingRefreshed == false) {
 			// Token erneuern
-			accesstokenIsBeiingRefreshed = true;
-			GWT.log("_________> RefreshTokenDispatcherCallback -> onResponseReceived -> Fetiching new Access Token");
-			LoginService loginservice = ServiceFactory.getLoginService();
-			loginservice.refreshtoken(UserCredentials.INSTANCE.getRefreshToken(), new MethodCallback<JWTToken>() {
+			accessTokenPromise = new Promise<>((resolve, reject) -> {
+				accesstokenIsBeiingRefreshed = true;
+				GWT.log("_________> RefreshTokenDispatcherCallback -> onResponseReceived -> Fetching new Access Token");
+				LoginService loginservice = ServiceFactory.getLoginService();
+				loginservice.refreshtoken(UserCredentials.INSTANCE.getRefreshToken(), new MethodCallback<JWTToken>() {
 
-				@Override
-				public void onSuccess(Method method, JWTToken jwttoken) {
-					GWT.log("_________> ForbiddenDispatcherCallback -> onResponseReceived -> Hole neuen JWT -> success");
-					UserCredentials.store(jwttoken);
-					accesstokenIsBeiingRefreshed = false;
-					try {
-						// Rewrite the Authorization Header...
-						mainmethod.header("Authorization", "Bearer " + jwttoken.getAccessToken());
-						// ...and send it again!
-						mainmethod.builder.send();
-					} catch (RequestException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
+					@Override
+					public void onSuccess(Method method, JWTToken jwttoken) {
+						accesstokenIsBeiingRefreshed = false;
+						GWT.log("_________> ForbiddenDispatcherCallback -> onResponseReceived -> Hole neuen JWT -> success");
+						UserCredentials.store(jwttoken);
+						resolve.onInvoke(jwttoken.getAccessToken());
+						try {
+							// Rewrite the Authorization Header...
+							mainmethod.header("Authorization", "Bearer " + jwttoken.getAccessToken());
+							// ...and send it again!
+							mainmethod.builder.send();
+						} catch (RequestException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+
 					}
-				}
 
-				@Override
-				public void onFailure(Method method, Throwable exception) {
-					// GWT.log("_________> ForbiddenDispatcherCallback -> onResponseReceived -> Hole
-					// neuen JWT -> error");
-					accesstokenIsBeiingRefreshed = false;
-					eventBus.fireEvent(new RuntimeErrorEvent("Authentifizierungsfehler", "Ihre Session ist abgelaufen. Bitte loggen Sie sich erneut ein.", true));
-					Cookies.removeCookie(CookieKeys.JWT_REFRESH_TOKEN);
+					@Override
+					public void onFailure(Method method, Throwable exception) {
+						accesstokenIsBeiingRefreshed = false;
+						// GWT.log("_________> ForbiddenDispatcherCallback -> onResponseReceived -> Hole
+						// neuen JWT -> error");
 
-				}
+						eventBus.fireEvent(new RuntimeErrorEvent("Authentifizierungsfehler", "Ihre Session ist abgelaufen. Bitte loggen Sie sich erneut ein.", true));
+						Cookies.removeCookie(CookieKeys.JWT_REFRESH_TOKEN);
+						reject.onInvoke(exception);
+					}
+				});
 			});
-
 		} else {
 			GWT.log("onResponseReceived with Statuscode: " + response.getStatusCode());
 			// GWT.log("onResponseReceived with Text: " + response.getText());
